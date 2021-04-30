@@ -1,0 +1,9 @@
+{% extends "index.html" %}
+{% block title %} Form {% endblock %}
+{% block content %}
+    <form action="http://localhost:5000/display" method="POST">
+        <p>Food Name:</p>
+        <p><input type="text" name="food"></p>
+        <p><input type="submit" value="submit"></p>
+    </form>
+{% endblock %}

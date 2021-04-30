@@ -1,6 +1,3 @@
-import numpy as np
-import pandas as pd
-from io import BytesIO
 from flask import Flask, request, render_template, send_file, redirect, url_for
 from clarifai.rest import ClarifaiApp
 import json, requests
