@@ -1,85 +1,86 @@
-from flask import Flask, request, render_template, send_file, redirect, url_for
-from clarifai.rest import ClarifaiApp
-import json, requests
-import matplotlib.pyplot as plt
-import seaborn as sns
-import os
+from flask import Flask, render_template, request, redirect, url_for, session
+import requests, json, os
+from ibm_watson import VisualRecognitionV3
+from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
+from flask_mysqldb import MySQL
+import MySQLdb.cursors
 
-app=Flask(__name__)
+app = Flask(__name__)
+app.secret_key = 'a'
+app.config['MYSQL_HOST'] = "remotemysql.com" 
+app.config["MYSQL_PORT"] = 3306
+app.config['MYSQL_USER'] = "lypD47Dxuh" 
+app.config['MYSQL_PASSWORD'] = "EATLsr4rTp"
+app.config['MYSQL_DB'] = "lypD47Dxuh" 
+mysql = MySQL(app)
 
-"""
+
 @app.route('/')
-def home():
-    return render_template("index.html")
+def index():
+    return  render_template('index.html')
 
-
-app.config["IMAGE_UPLOADS"] = "C:\\Users\\LemonNitz\\Desktop\\Nutrition Assistant Manager\\static"
-app.config["ALLOWED_IMAGE_EXTENSIONS"] = ["JPEG","JPG","PNG","GIF"]
-
-def allowed_images(filename):
-    if not "." in filename:
-        return False
-    
-    ext = filename.rsplit("." ,1)[1]
-    
-    if ext.upper() in app.config["ALLOWED_IMAGE_EXTENSION"]:
-        return True
-    else:
-        return False
-
-
-@app.route("/display", methods=["POST","GET"])
-def display_img():
-    if request.method == "POST":
-        if request.files:
-            image = request.files["file"]
-            if image.filename == "":
-                print("NO FILENAME")
-                return redirect(request.url)
-            if allowed_images(image.filename):
-                image.save(os.path.join(app.config["IMAGE_UPLOADS"], image.filename))
-                print("image saved")
-                # For final model cut and paste [1] here and us response = model.predict_by_url(image.filename)
-                return redirect(request.url)
-            else:
-                print("Wrong File Type")
-                return redirect(request.url)
+@app.route('/login', methods = ["POST", "GET"])
+def login():
+    """
+    Login page with username and password
+    """
     return render_template("login.html")
-app=Flask(__name__)
-"""
-# [1]
-app1=ClarifaiApp(api_key='e56af53f775c4f98ac8c4694a6ce093d')
-model = app1.public_models.general_model
-response = model.predict_by_url(
-    url='https://st.depositphotos.com/1102480/1589/i/950/depositphotos_15890699-stock-photo-big-hamburger.jpg')
-concepts = response['outputs'][0]['data']['concepts']
-arr = ["Sugars","Energy","Vitamin A","Vitamin D","Protein","Fiber","Iron","Magnesium","Phosphorus","Cholestrol",
-       "Vitamin C","Carbohydrate","Total lipid (fat)"]
 
-for concept in concepts:
-    apiKey = '9f8yGs19GGo5ExPpBj7fqjKOFlXXxkJdMyJKXwG3'
-    foodName = concept['name']
-    response = requests.get('https://api.nal.usda.gov/fdc/v1/foods/search?api_key={}&query={}'.format(apiKey, foodName))
-    data = json.loads(response.text)
     
-    x = data['totalHits']
-    y = data['foodSearchCriteria']['requireAllWords']
-    if x != 0 and concept['value']>0.99:
-        foodArr = data['foods'][0]['foodNutrients']
-        print(foodName)
-        for x in foodArr:
+@app.route('/submission', methods=["POST", "GET"])
+def submission():
+    if request.method == "POST":
+        name = request.form["username"]
+        password = request.form["password"]
+        session['name'] = name
+        session['password'] = password
+        cursor = mysql.connection.cursor()
+        cursor.execute('INSERT INTO user_details VALUES(NULL,% s, % s)',(name, password))
+        mysql.connection.commit()
+        a = session['name']
+        cursor.execute("SELECT * FROM `user_details` WHERE `username` = %s",[a])
+        account = cursor.fetchone()
+        return render_template("submission.html", account = account[1])
+    else:
+        return redirect(request.url)
+    
+    
+@app.route('/display', methods = ["POST", "GET"])
+def display():
+    """
+    Display page that displays nutritional value of input image of food name
+    """
+    if request.method == "POST":
+        image = request.files["food"] 
+        authenticator = IAMAuthenticator('2A6BucKErMHbNpKGwdyGMBTsAZYxRYmm8Rxr0chzTvfm')
+        visual_recognition = VisualRecognitionV3(
+        version='2018-03-19',
+        authenticator=authenticator)
+        visual_recognition.set_service_url('https://api.us-south.visual-recognition.watson.cloud.ibm.com/instances/80c78105-880f-4bb7-b79c-93764795ee73') 
+        classes = visual_recognition.classify(images_filename=image.filename, 
+                                              images_file=image ,classifier_ids='food').get_result() 
+        data=json.loads(json.dumps(classes,indent=4))
+
+        foodName=data["images"][0]['classifiers'][0]["classes"][0]["class"]
+        nutrients = {}
+        USDAapiKey = '9f8yGs19GGo5ExPpBj7fqjKOFlXXxkJdMyJKXwG3'
+        response = requests.get('https://api.nal.usda.gov/fdc/v1/foods/search?api_key={}&query={}&requireAllWords={}'.format(USDAapiKey, foodName, True))
+
+        data = json.loads(response.text)
+        concepts = data['foods'][0]['foodNutrients']
+        arr = ["Sugars","Energy", "Vitamin A","Vitamin D","Vitamin B", "Vitamin C", "Protein","Fiber","Iron","Magnesium",
+               "Phosphorus","Cholestrol","Carbohydrate","Total lipid (fat)", "Sodium", "Calcium",]
+        for x in concepts:
             if x['nutrientName'].split(',')[0] in arr:
                 if(x['nutrientName'].split(',')[0]=="Total lipid (fat)"):
-                    print("Fat", ":", x['value'],x['unitName']) 
+                    nutrients['Fat'] = str(x['value'])+" " + x['unitName']
                 else:    
-                    print(x['nutrientName'].split(',')[0], ":", x['value'],x['unitName'])
-        print("--------------------")
+                    nutrients[x['nutrientName'].split(',')[0]] = str(x['value'])+" " +x['unitName']
+                    
+        return render_template('display.html', x = foodName, data = nutrients, account = session['name'])
     else:
-        break
+        return redirect(request.url)       
 
-# [1]
-    
-"""
 if __name__=='__main__':
-    app.run(debug = True)
-"""
+    app.run(debug=True)
+    
